@@ -1,0 +1,947 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>瑞法与羌青瓷 - 情感占卜</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous" defer></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;500;700&display=swap');
+
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #020205;
+            font-family: 'Noto Serif SC', serif;
+            color: #e0e0e0;
+            user-select: none;
+        }
+
+        #canvas-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 1;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: rgba(2, 2, 5, 0.9);
+            transition: opacity 1.5s ease-in-out;
+        }
+
+        #ui-layer.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .input_video {
+            display: none;
+        }
+        
+        #gesture-hint {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255,255,255,0.9);
+            font-size: 15px;
+            text-align: center;
+            z-index: 5;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.5s;
+            background: rgba(20,20,40,0.7);
+            padding: 10px 24px;
+            border-radius: 30px;
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255,255,255,0.1);
+            letter-spacing: 2px;
+            text-shadow: 0 0 10px rgba(255,255,255,0.3);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+        }
+
+        .breathe {
+            animation: breatheAnim 4s infinite ease-in-out;
+        }
+
+        @keyframes breatheAnim {
+            0%, 100% { opacity: 0.5; text-shadow: 0 0 5px rgba(255,255,255,0.1); transform: scale(0.98); }
+            50% { opacity: 1; text-shadow: 0 0 25px rgba(255,255,255,0.5); transform: scale(1.02); }
+        }
+    </style>
+</head>
+<body>
+
+    <audio id="bgMusic" src="./audio/2.mp3" loop></audio>
+    <video class="input_video"></video>
+    <div id="canvas-container"></div>
+
+    <div id="ui-layer">
+        <div id="loading-text" class="text-sm text-gray-400 mb-4 tracking-[0.3em] uppercase">System Initializing...</div>
+        
+        <div id="intro-content" class="text-center hidden flex flex-col items-center">
+            <h1 class="text-4xl md:text-6xl font-light mb-8 breathe tracking-widest text-gray-100">瑞法，你来了</h1>
+
+            <button id="start-btn" class="pointer-events-auto border border-gray-500 px-10 py-3 rounded-full text-gray-300 hover:bg-white hover:text-black transition duration-700 tracking-[0.2em] text-sm uppercase hover:shadow-[0_0_20px_rgba(255,255,255,0.5)]">
+                开始
+            </button>
+        </div>
+    </div>
+
+    <div id="gesture-hint">正在寻找手部信号...</div>
+
+    <script>
+        const ALL_TEXTS = [
+            "我能不能恨你啊羌青瓷", "我爱你啊瑞法", "羌青瓷你舍得吗", "瑞法我舍不得你啊",
+            "我程聿怀执念只有瑞法", "羌青瓷你是觉得我好骗吗", "羌青瓷你的私心要伤害多少人",
+            "瑞法我好心疼你能不能都告诉我", "瑞法我心甘情愿", "羌青瓷刨开你的心让我看看你的真心",
+            "瑞法我清楚地看见你了", "羌青瓷究竟是几分真心几分利用", "瑞法我好喜欢好喜欢你",
+            "羌青瓷你丢下我我会恨你一辈子的", "羌青瓷我不会原谅你", "瑞法你知道的我永远会靠近你",
+            "瑞法大战前夕我也在陪着你", "羌青瓷你的信件都是你编造的吗", "羌青瓷你能狠心让我忘了就不要来见我",
+            "瑞法迟来的说句生日快乐", "羌青瓷是恨久了会滋生爱意吗", "瑞法我的理想不用成为你的负担",
+            "瑞法有什么事能跟我说吗", "我程聿怀向瑞法低头希望他能回头看看我", "羌青瓷靠近你了就靠近了痛苦",
+            "瑞法远离了你就远离了幸福", "羌青瓷你其实是在自我感动", "瑞法我还是被你打动了"
+        ];
+        const FINAL_TEXT = "你看，爱也过得好快，恨也过得好快";
+
+        const CARD_BACK_URL = "./audio/h2.png"; 
+        
+        const cardBackImg = new Image();
+        cardBackImg.crossOrigin = "Anonymous";
+        cardBackImg.src = CARD_BACK_URL;
+
+        let availableTexts = [...ALL_TEXTS];
+        let CARD_TEXTS = [];
+        const TOTAL_CARDS = 30;
+
+        let scene, camera, renderer;
+        let cardGroup, starField; 
+        let cards = []; 
+        let raycaster;
+        let handCursor; 
+        let hands = null; 
+        let handsLoaded = false;
+        
+        let time = 0;
+        let isPinching = false;
+        let activeCard = null; 
+        let activeAura = null; 
+        let isZoomLocked = false; 
+        let particleTexture = null; 
+        
+        const GESTURE = { NONE: 0, OPEN_HAND: 1, POINTING: 2, PINCHING: 3 };
+        let currentGesture = GESTURE.NONE;
+
+        let targetGroupRotationY = 0;
+        let targetCursorX = 0;
+        let targetCursorY = 0;
+        let smoothedCursorX = 0;
+        let smoothedCursorY = 0;
+        let lastHandX = null; 
+
+        const STATE = { INTRO: 0, IDLE: 1, VIEWING: 3, DISSOLVING: 4 };
+        let currentState = STATE.INTRO;
+
+        const uiLayer = document.getElementById('ui-layer');
+        const startBtn = document.getElementById('start-btn');
+        const gestureHint = document.getElementById('gesture-hint');
+        const videoElement = document.getElementsByClassName('input_video')[0];
+        const loadingText = document.getElementById('loading-text');
+        const introContent = document.getElementById('intro-content');
+        const bgMusic = document.getElementById('bgMusic');
+
+        window.onload = function() {
+            init();
+            try {
+                if (typeof Hands !== 'undefined') {
+                    hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+                    hands.setOptions({
+                        maxNumHands: 1,
+                        modelComplexity: 0, 
+                        minDetectionConfidence: 0.5,
+                        minTrackingConfidence: 0.5
+                    });
+                    hands.onResults(onHandResults);
+                    handsLoaded = true;
+                } else {
+                    console.warn('MediaPipe Not Loaded');
+                    gestureHint.innerText = "组件加载失败，请使用鼠标交互";
+                }
+            } catch (e) {
+                console.warn('Error:', e);
+                gestureHint.innerText = "组件出错，请使用鼠标交互";
+            }
+            loadingText.style.display = 'none';
+            introContent.classList.remove('hidden');
+        };
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x020205, 0.012); 
+
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 0, 0.1); 
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); 
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            particleTexture = createGlowTexture();
+
+            const ambientLight = new THREE.AmbientLight(0x404040, 1.5);
+            scene.add(ambientLight);
+            
+            const centerLight = new THREE.PointLight(0xaaccff, 1.8, 50);
+            centerLight.position.set(0, 6, 6);
+            scene.add(centerLight);
+            
+            const warmLight = new THREE.PointLight(0xffaa55, 1.2, 30);
+            warmLight.position.set(0, -6, 6);
+            scene.add(warmLight);
+            
+            raycaster = new THREE.Raycaster();
+
+            const cursorGeo = new THREE.SphereGeometry(0.04, 16, 16);
+            const cursorMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 });
+            handCursor = new THREE.Mesh(cursorGeo, cursorMat);
+            handCursor.visible = false;
+            
+            const cursorGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+                map: particleTexture, color: 0xffffff, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending
+            }));
+            cursorGlow.scale.set(0.3, 0.3, 1);
+            handCursor.add(cursorGlow);
+            scene.add(handCursor);
+
+            createStarfield();
+
+            cardGroup = new THREE.Group();
+            scene.add(cardGroup);
+            createCards();
+
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mousedown', () => { isMouseDrag = true; });
+            document.addEventListener('mouseup', () => { isMouseDrag = false; });
+            
+            startBtn.addEventListener('click', startExperience);
+
+            animate();
+        }
+
+        function createGlowTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64; canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+            grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+            grad.addColorStop(0.3, 'rgba(255, 255, 255, 0.4)');
+            grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 64, 64);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function createStarfield() {
+            const geometry = new THREE.BufferGeometry();
+            const count = 4000; 
+            const positions = [];
+            
+            for(let i=0; i<count; i++) {
+                const r = 40 + Math.random() * 100; 
+                const theta = 2 * Math.PI * Math.random();
+                const phi = Math.acos(2 * Math.random() - 1);
+                const x = r * Math.sin(phi) * Math.cos(theta);
+                const y = r * Math.sin(phi) * Math.sin(theta);
+                const z = r * Math.cos(phi);
+                positions.push(x, y, z);
+            }
+            
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            const material = new THREE.PointsMaterial({
+                color: 0x88bbff, 
+                size: 0.5,       
+                map: particleTexture,
+                transparent: true,
+                opacity: 0.8,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
+            });
+            
+            starField = new THREE.Points(geometry, material);
+            scene.add(starField);
+        }
+
+        let isMouseDrag = false;
+
+        function startExperience() {
+            bgMusic.play();
+            uiLayer.classList.add('hidden');
+            uiLayer.style.pointerEvents = 'none'; 
+            currentState = STATE.IDLE;
+            gestureHint.style.opacity = 1;
+            
+            if (handsLoaded && typeof Camera !== 'undefined') {
+                const cameraUtils = new Camera(videoElement, {
+                    onFrame: async () => { if (hands) await hands.send({image: videoElement}); },
+                    width: 640, height: 480
+                });
+                cameraUtils.start().catch(e => {
+                    console.warn('Camera error:', e);
+                    gestureHint.innerText = "摄像头占用中，请使用鼠标";
+                });
+            } else {
+                gestureHint.innerText = "手势不可用，请使用鼠标";
+            }
+        }
+
+        function createCards() {
+            const radius = 11; 
+            for (let i = 0; i < TOTAL_CARDS; i++) {
+                const backCanvas = createCardTexture('back');
+                const backTexture = new THREE.CanvasTexture(backCanvas);
+                
+                if (!cardBackImg.complete) {
+                    cardBackImg.addEventListener('load', () => {
+                        const ctx = backCanvas.getContext('2d');
+                        drawBackImageContent(ctx);
+                        backTexture.needsUpdate = true;
+                    });
+                }
+
+                backTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+                
+                const sideMat = new THREE.MeshStandardMaterial({ color: 0x172c22, roughness: 0.4 });
+                const material = [
+                    sideMat, sideMat, sideMat, sideMat,
+                    new THREE.MeshStandardMaterial({ map: backTexture, roughness: 0.5, metalness: 0.3 }),
+                    new THREE.MeshStandardMaterial({ color: 0x172c22, roughness: 0.5, metalness: 0.1 }) 
+                ];
+                
+                const cardGeo = new THREE.BoxGeometry(1.8, 3.2, 0.04);
+                const card = new THREE.Mesh(cardGeo, material);
+                
+                const angle = (i / TOTAL_CARDS) * Math.PI * 2;
+                const x = Math.cos(angle) * radius;
+                const z = Math.sin(angle) * radius;
+                card.position.set(x, 0, z);
+                
+                card.lookAt(0, 0, 0);
+                
+                card.userData = { 
+                    id: i, 
+                    originPos: card.position.clone(), 
+                    text: null,
+                    isDissolved: false,
+                    currentAngle: angle,
+                    targetAngle: angle
+                };
+                cardGroup.add(card);
+                cards.push(card);
+            }
+        }
+
+        function drawBackImageContent(ctx) {
+            if (cardBackImg.complete && cardBackImg.naturalWidth > 0) {
+                const x = 16, y = 16, w = 224, h = 418; 
+                
+                ctx.save();
+                
+                const targetW = w * 0.85; 
+                const targetH = h * 0.7; 
+
+                const imgAspect = cardBackImg.naturalWidth / cardBackImg.naturalHeight;
+                let drawW = targetW;
+                let drawH = targetW / imgAspect;
+
+                if (drawH > targetH) {
+                    drawH = targetH;
+                    drawW = targetH * imgAspect;
+                }
+
+                const drawX = x + (w - drawW) / 2;
+                const drawY = y + (h - drawH) / 2;
+
+                ctx.shadowColor = "rgba(0,0,0,0.7)";
+                ctx.shadowBlur = 25;
+                ctx.shadowOffsetY = 10;
+
+                ctx.drawImage(cardBackImg, drawX, drawY, drawW, drawH);
+                
+                ctx.restore();
+            }
+        }
+
+
+        function createCardTexture(type, text) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            const drawRoundRect = (x, y, w, h, r) => {
+                if (w < 2 * r) r = w / 2; if (h < 2 * r) r = h / 2;
+                ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r);
+                ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+            };
+
+            const drawGreenBackground = () => {
+                const grad = ctx.createLinearGradient(0, 0, 256, 450);
+                grad.addColorStop(0, '#0f1f18'); 
+                grad.addColorStop(1, '#1a3326'); 
+                ctx.fillStyle = grad; 
+                ctx.fillRect(0,0,256,450);
+                
+                for(let i=0; i<3000; i++) {
+                    ctx.fillStyle = `rgba(255,255,255,${Math.random()*0.05})`;
+                    ctx.fillRect(Math.random()*256, Math.random()*450, 2, 2);
+                }
+
+                ctx.lineWidth = 6;
+                const borderGrad = ctx.createLinearGradient(0,0,256,450);
+                borderGrad.addColorStop(0, '#594426'); borderGrad.addColorStop(0.5, '#a88b56'); borderGrad.addColorStop(1, '#594426');
+                ctx.strokeStyle = borderGrad;
+                drawRoundRect(10, 10, 236, 430, 10); ctx.stroke();
+                
+                ctx.lineWidth = 1;
+                ctx.strokeStyle = "rgba(168, 139, 86, 0.3)";
+                drawRoundRect(16, 16, 224, 418, 6); ctx.stroke();
+            };
+
+            if (type === 'back') {
+                canvas.width = 256; canvas.height = 450; 
+                drawGreenBackground();
+                
+                drawBackImageContent(ctx);
+
+            } else {
+                canvas.width = 512; canvas.height = 900;
+                
+                ctx.save();
+                ctx.scale(2, 2);
+                drawGreenBackground();
+                ctx.restore();
+                
+                ctx.font = '34px "Noto Serif SC"';
+                ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                ctx.fillStyle = '#ffffff';
+                ctx.shadowColor = "rgba(255, 255, 255, 1)"; 
+                ctx.shadowBlur = 50;
+                wrapText(ctx, text, 256, 450, 420, 55);
+            }
+            return canvas;
+        }
+
+        function wrapText(context, text, x, y, maxWidth, lineHeight) {
+            if (text.length < 12) {
+                context.font = '42px "Noto Serif SC"';
+                let startY = y - (text.length * lineHeight) / 2;
+                for(let n = 0; n < text.length; n++) {
+                    context.fillStyle = '#ffffff';
+                    context.shadowColor = "rgba(255, 255, 255, 1)";
+                    context.shadowBlur = 50;
+                    context.fillText(text[n], x, startY + n * lineHeight);
+                    context.shadowBlur = 30;
+                    context.fillText(text[n], x, startY + n * lineHeight);
+                    context.shadowBlur = 15;
+                    context.fillText(text[n], x, startY + n * lineHeight);
+                }
+            } else {
+                context.font = '36px "Noto Serif SC"';
+                let words = text.split(''), line = '', lineArray = [];
+                for(let n = 0; n < words.length; n++) {
+                    let testLine = line + words[n];
+                    if (context.measureText(testLine).width > maxWidth && n > 0) { lineArray.push(line); line = words[n]; }
+                    else { line = testLine; }
+                }
+                lineArray.push(line);
+                let startY = y - (lineArray.length * lineHeight) / 2;
+                for(let k = 0; k < lineArray.length; k++) {
+                    context.fillStyle = '#ffffff';
+                    context.shadowColor = "rgba(255, 255, 255, 1)";
+                    context.shadowBlur = 50;
+                    context.fillText(lineArray[k], x, startY + k * lineHeight);
+                    context.shadowBlur = 30;
+                    context.fillText(lineArray[k], x, startY + k * lineHeight);
+                    context.shadowBlur = 15;
+                    context.fillText(lineArray[k], x, startY + k * lineHeight);
+                }
+            }
+        }
+
+        function onHandResults(results) {
+            if (currentState === STATE.VIEWING) {
+                if (!isZoomLocked && results.multiHandLandmarks.length > 0) detectRelease(results.multiHandLandmarks[0]);
+                return;
+            }
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                const indexTip = landmarks[8];
+                const thumbTip = landmarks[4];
+                const middleTip = landmarks[12];
+                const ringTip = landmarks[16];
+                const wrist = landmarks[0];
+
+                const ndcX = (1 - indexTip.x) * 2 - 1;
+                const ndcY = - (indexTip.y * 2 - 1);
+                
+                const dIndex = Math.hypot(indexTip.x - wrist.x, indexTip.y - wrist.y);
+                const dMiddle = Math.hypot(middleTip.x - wrist.x, middleTip.y - wrist.y);
+                const dRing = Math.hypot(ringTip.x - wrist.x, ringTip.y - wrist.y);
+                const pinchDist = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
+                
+                const isPinchingNow = pinchDist < 0.08; 
+                const isPointing = (dIndex > 0.2) && (dMiddle < dIndex * 0.85) && (dRing < dIndex * 0.85);
+                const isOpenHand = (dIndex > 0.2) && (dMiddle > 0.2) && (dRing > 0.2) && !isPinchingNow;
+
+                if (isPinchingNow) {
+                    currentGesture = GESTURE.PINCHING;
+                    gestureHint.innerText = "🔹 捏合 · 启示"; 
+                    handCursor.children[0].material.color.setHex(0xffaa00); 
+                    
+                    if (!isPinching) {
+                        isPinching = true;
+                        detectPinchAction();
+                    }
+
+                } else if (isPointing) {
+                    isPinching = false; 
+                    currentGesture = GESTURE.POINTING;
+                    gestureHint.innerText = "☝️ 选中卡片";
+                    handCursor.children[0].material.color.setHex(0xffffff); 
+                    targetCursorX = ndcX;
+                    targetCursorY = ndcY;
+                    lastHandX = null;
+                    handCursor.visible = true;
+
+                } else if (isOpenHand) {
+                    isPinching = false; 
+                    currentGesture = GESTURE.OPEN_HAND;
+                    gestureHint.innerText = "🖐️ 滑动 · 命运之轮";
+                    handCursor.visible = false; 
+                    if (lastHandX !== null) {
+                        const delta = ndcX - lastHandX;
+                        targetGroupRotationY -= delta * 2.2; 
+                    }
+                    lastHandX = ndcX;
+
+                } else {
+                    isPinching = false; 
+                    currentGesture = GESTURE.NONE;
+                    gestureHint.innerText = "信号连接中...";
+                    lastHandX = null; 
+                }
+            } else {
+                gestureHint.innerText = "未检测到手部";
+                lastHandX = null;
+                isPinching = false;
+            }
+        }
+
+        function detectPinchAction() {
+            if (currentState === STATE.IDLE && activeCard) {
+                currentState = STATE.VIEWING;
+                zoomInCard(activeCard);
+            }
+        }
+
+        function detectRelease(landmarks) {
+            const indexTip = landmarks[8];
+            const thumbTip = landmarks[4];
+            const distance = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
+            if (distance > 0.15) {
+                currentState = STATE.DISSOLVING;
+                dissolveCard(activeCard);
+            }
+        }
+
+        function onMouseMove(event) {
+            const ndcX = (event.clientX / window.innerWidth) * 2 - 1;
+            const ndcY = - (event.clientY / window.innerHeight) * 2 + 1;
+            if (isMouseDrag) {
+                currentGesture = GESTURE.OPEN_HAND;
+                gestureHint.innerText = "🖱️ 旋转模式";
+                if (lastHandX !== null) {
+                    const delta = ndcX - lastHandX;
+                    targetGroupRotationY -= delta * 2.0;
+                }
+                lastHandX = ndcX;
+                handCursor.visible = false;
+                isPinching = false;
+            } else {
+                currentGesture = GESTURE.POINTING;
+                gestureHint.innerText = "🖱️ 选择模式 (点击=捏合)";
+                targetCursorX = ndcX;
+                targetCursorY = ndcY;
+                lastHandX = null;
+                handCursor.visible = true;
+                isPinching = false;
+            }
+        }
+        
+        document.addEventListener('mousedown', () => { 
+            if(!isMouseDrag && currentState === STATE.IDLE && activeCard) {
+                currentState = STATE.VIEWING;
+                zoomInCard(activeCard);
+            }
+        });
+        document.addEventListener('mouseup', () => {
+           if(currentState === STATE.VIEWING && !isZoomLocked) {
+               currentState = STATE.DISSOLVING;
+               dissolveCard(activeCard);
+           }
+        });
+
+        function animate() {
+            requestAnimationFrame(animate);
+            time += 0.01;
+            if (currentState === STATE.INTRO) return;
+
+            smoothedCursorX += (targetCursorX - smoothedCursorX) * 0.15; 
+            smoothedCursorY += (targetCursorY - smoothedCursorY) * 0.15;
+            cardGroup.rotation.y += (targetGroupRotationY - cardGroup.rotation.y) * 0.05;
+
+            updateHandCursor3D(smoothedCursorX, smoothedCursorY);
+
+            if(starField) starField.rotation.y = time * 0.02; 
+
+            cards.forEach(c => {
+                if (!c.userData.isDissolved && c !== activeCard && c.userData.targetAngle !== undefined) {
+                    const diff = c.userData.targetAngle - c.userData.currentAngle;
+                    if (Math.abs(diff) > 0.0001) {
+                        c.userData.currentAngle += diff * 0.05;
+                        const r = 11;
+                        c.position.x = Math.cos(c.userData.currentAngle) * r;
+                        c.position.z = Math.sin(c.userData.currentAngle) * r;
+                        c.lookAt(0, 0, 0);
+                        c.userData.originPos.copy(c.position); 
+                    }
+                }
+            }); 
+
+            if (currentState === STATE.VIEWING && activeAura) {
+                updateAura(activeAura);
+                if(activeCard && !isZoomLocked) {
+                    activeCard.position.y = Math.sin(time * 1.5) * 0.05; 
+                    
+                    const camToCard = activeCard.position.clone().sub(camera.position).normalize();
+                    activeAura.position.copy(activeCard.position).add(camToCard.multiplyScalar(0.8)); 
+                    activeAura.rotation.copy(activeCard.rotation);
+                }
+            }
+
+            if (currentState === STATE.IDLE) {
+                if (currentGesture === GESTURE.POINTING || currentGesture === GESTURE.PINCHING) {
+                    raycaster.setFromCamera(new THREE.Vector2(smoothedCursorX, smoothedCursorY), camera);
+                    const visibleCards = cards.filter(c => !c.userData.isDissolved);
+                    const intersects = raycaster.intersectObjects(visibleCards);
+
+                    if (intersects.length > 0) {
+                        const target = intersects[0].object;
+                        if (activeCard !== target) {
+                            if (activeCard) resetCardState(activeCard);
+                            activeCard = target;
+                            highlightCard(activeCard);
+                        }
+                    } else {
+                        if (activeCard) { resetCardState(activeCard); activeCard = null; }
+                    }
+                } else {
+                    if (activeCard) { resetCardState(activeCard); activeCard = null; }
+                }
+            }
+            renderer.render(scene, camera);
+        }
+
+        function updateHandCursor3D(ndcX, ndcY) {
+            const vector = new THREE.Vector3(ndcX, ndcY, 0.5); 
+            vector.unproject(camera);
+            const dir = vector.sub(camera.position).normalize();
+            const distance = 4; 
+            const pos = camera.position.clone().add(dir.multiplyScalar(distance));
+            handCursor.position.copy(pos);
+        }
+
+        function highlightCard(card) {
+            const dir = card.userData.originPos.clone().normalize();
+            const targetPos = dir.multiplyScalar(9.5); 
+            targetPos.y = 0;
+            card.position.lerp(targetPos, 0.1);
+            card.scale.lerp(new THREE.Vector3(1.15, 1.15, 1.15), 0.1);
+            const materials = card.material;
+            if(materials[4].emissive) materials[4].emissive.setHex(0x2e5844); 
+        }
+
+        function resetCardState(card) {
+            if (card.parent === scene) cardGroup.attach(card);
+            const origin = card.userData.originPos;
+            card.position.lerp(origin, 0.1);
+            card.lookAt(0,0,0);
+            card.scale.set(1, 1, 1);
+            const materials = card.material;
+            if(materials[4].emissive) materials[4].emissive.setHex(0x000000);
+        }
+
+        function zoomInCard(card) {
+            scene.attach(card); 
+            card.updateMatrixWorld(); 
+            
+            isZoomLocked = true;
+            
+            const remainingCards = cards.filter(c => !c.userData.isDissolved).length;
+            let cardText;
+            if (remainingCards === 1) {
+                cardText = FINAL_TEXT;
+            } else {
+                if (availableTexts.length === 0) {
+                    availableTexts = [...ALL_TEXTS];
+                }
+                const randomIndex = Math.floor(Math.random() * availableTexts.length);
+                cardText = availableTexts[randomIndex];
+                availableTexts.splice(randomIndex, 1);
+            }
+            card.userData.text = cardText;
+            
+            const frontCanvas = createCardTexture('front', cardText);
+            const frontTexture = new THREE.CanvasTexture(frontCanvas);
+            frontTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+            
+            const frontMaterial = card.material[5];
+            frontMaterial.map = frontTexture;
+            frontMaterial.transparent = false; 
+            frontMaterial.opacity = 1;         
+            frontMaterial.emissive = new THREE.Color(0xffffff);
+            frontMaterial.emissiveMap = frontTexture;
+            frontMaterial.emissiveIntensity = 0.3; 
+            frontMaterial.needsUpdate = true;
+            
+            const startPos = card.position.clone();
+            const startScale = card.scale.clone();
+            const startQuat = card.quaternion.clone();
+
+            const targetPos = new THREE.Vector3(0, 0, -4.2); 
+            targetPos.applyMatrix4(camera.matrixWorld);
+
+            const dummy = new THREE.Object3D();
+            dummy.position.copy(targetPos);
+            
+            dummy.lookAt(camera.position); 
+            dummy.rotateY(Math.PI);
+            dummy.updateMatrix(); 
+            const targetQuat = dummy.quaternion.clone();
+
+            activeAura = createWhiteAura(card); 
+            scene.add(activeAura);
+            
+            let progress = 0;
+            
+            function animateZoom() {
+                if (currentState !== STATE.VIEWING) return;
+                
+                progress += 0.015; 
+                if (progress > 1) progress = 1;
+                
+                const t = progress;
+                const ease = 1 - Math.pow(1 - t, 4); 
+                
+                card.position.lerpVectors(startPos, targetPos, ease);
+                card.scale.lerpVectors(startScale, new THREE.Vector3(1.5, 1.5, 1.5), ease);
+                
+                card.quaternion.slerpQuaternions(startQuat, targetQuat, ease);
+
+                const camToCard = card.position.clone().sub(camera.position).normalize();
+                activeAura.position.copy(card.position).add(camToCard.multiplyScalar(0.8)); 
+                activeAura.rotation.copy(card.rotation);
+                
+                activeAura.material.opacity = ease * 0.8;
+
+                if (progress >= 1) {
+                    isZoomLocked = false;
+                } else {
+                    requestAnimationFrame(animateZoom);
+                }
+            }
+            animateZoom();
+        }
+
+        function createWhiteAura(card) {
+            const count = 200; 
+            const geometry = new THREE.BufferGeometry();
+            const positions = [];
+            const velocities = [];
+            const width = 1.8, height = 3.2;
+            
+            for(let i=0; i<count; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const radius = 3 + Math.random() * 2;
+                const x = Math.cos(angle) * radius;
+                const y = (Math.random() - 0.5) * (height + 4);
+                const z = Math.sin(angle) * radius;
+                positions.push(x, y, z);
+                
+                velocities.push(-x * 0.02, -y * 0.015, -z * 0.02);
+            }
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            
+            const material = new THREE.PointsMaterial({
+                color: 0xffffff, 
+                size: 0.18,      
+                map: particleTexture, 
+                transparent: true, 
+                opacity: 0, 
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
+            });
+            const aura = new THREE.Points(geometry, material);
+            aura.userData.velocities = velocities;
+            aura.userData.isConverging = true;
+            return aura;
+        }
+
+        function updateAura(aura) {
+            const positions = aura.geometry.attributes.position.array;
+            const velocities = aura.userData.velocities;
+            
+            if(aura.userData.isConverging) {
+                let allConverged = true;
+                for(let i=0; i<positions.length; i+=3) {
+                    const distSq = positions[i]**2 + positions[i+1]**2 + positions[i+2]**2;
+                    if(distSq > 0.25) { 
+                        positions[i] += velocities[i];
+                        positions[i+1] += velocities[i+1];
+                        positions[i+2] += velocities[i+2];
+                        allConverged = false;
+                    }
+                }
+                if(allConverged) aura.userData.isConverging = false;
+            } else {
+                for(let i=0; i<positions.length; i+=3) {
+                    positions[i] += (Math.random()-0.5) * 0.005;
+                    positions[i+1] += (Math.random()-0.5) * 0.005;
+                }
+            }
+            aura.geometry.attributes.position.needsUpdate = true;
+        }
+
+        function dissolveCard(card) {
+            card.visible = false;
+            card.userData.isDissolved = true;
+            if(activeAura) { scene.remove(activeAura); activeAura = null; }
+            createCardExplosion(card);
+            
+            rearrangeCards();
+
+            setTimeout(() => {
+                scene.remove(card); 
+                activeCard = null;
+                currentState = STATE.IDLE;
+                isPinching = false; 
+            }, 1500);
+        }
+
+        function rearrangeCards() {
+            const validCards = cards.filter(c => !c.userData.isDissolved);
+            const count = validCards.length;
+            if (count === 0) return;
+            
+            validCards.forEach((c, i) => {
+                const target = (i / count) * Math.PI * 2;
+                let current = c.userData.currentAngle;
+                
+                const PI2 = Math.PI * 2;
+                while (target - current > Math.PI) current += PI2;
+                while (target - current < -Math.PI) current -= PI2;
+                
+                c.userData.currentAngle = current;
+                c.userData.targetAngle = target;
+            });
+        }
+
+        function createCardExplosion(card) {
+            const particleCount = 600; 
+            const geometry = new THREE.BufferGeometry();
+            const positions = [];
+            const velocities = [];
+            card.updateMatrixWorld();
+            const matrix = card.matrixWorld;
+            const vector = new THREE.Vector3();
+            const width = 1.8, height = 3.2;
+
+            for (let i = 0; i < particleCount; i++) {
+                const lx = (Math.random() - 0.5) * width;
+                const ly = (Math.random() - 0.5) * height;
+                const lz = (Math.random() - 0.5) * 0.1;
+                vector.set(lx, ly, lz);
+                vector.applyMatrix4(matrix);
+                positions.push(vector.x, vector.y, vector.z);
+                
+                const speed = 0.05 + Math.random() * 0.15; 
+                const vDir = vector.clone().sub(card.position).normalize();
+                
+                velocities.push(
+                    vDir.x * speed, 
+                    vDir.y * speed + 0.03, 
+                    vDir.z * speed
+                );
+            }
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            
+            const material = new THREE.PointsMaterial({
+                size: 0.25, 
+                color: 0xffffee, 
+                map: particleTexture, 
+                transparent: true, 
+                opacity: 1, 
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
+            });
+            const particles = new THREE.Points(geometry, material);
+            scene.add(particles);
+
+            let life = 1.0;
+            function animateP() {
+                life -= 0.02; 
+                if (life <= 0) { scene.remove(particles); geometry.dispose(); material.dispose(); return; }
+                const pos = particles.geometry.attributes.position;
+                for (let i = 0; i < particleCount; i++) {
+                    pos.array[i*3] += velocities[i*3];
+                    pos.array[i*3+1] += velocities[i*3+1];
+                    pos.array[i*3+2] += velocities[i*3+2];
+                    
+                    velocities[i*3] *= 0.98; 
+                    velocities[i*3+1] *= 0.98;
+                    velocities[i*3+2] *= 0.98;
+                }
+                pos.needsUpdate = true;
+                material.opacity = life;
+                requestAnimationFrame(animateP);
+            }
+            animateP();
+        }
+    </script>
+</body>
+</html>
