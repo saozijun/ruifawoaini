@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>瑞法与羌青瓷 - 情感占卜</title>
+    <title>瑞法与羌青瓷 - 情感占卜 (性能优化版)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous" defer></script>
@@ -176,7 +176,7 @@
                     hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
                     hands.setOptions({
                         maxNumHands: 1,
-                        modelComplexity: 0, 
+                        modelComplexity: 0, // 性能优化：降低模型复杂度
                         minDetectionConfidence: 0.5,
                         minTrackingConfidence: 0.5
                     });
@@ -201,9 +201,9 @@
             camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
             camera.position.set(0, 0, 0.1); 
 
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); 
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // 性能优化：限制最大像素比
             document.getElementById('canvas-container').appendChild(renderer.domElement);
 
             particleTexture = createGlowTexture();
@@ -300,7 +300,7 @@
         let isMouseDrag = false;
 
         function startExperience() {
-            bgMusic.play();
+            bgMusic.play().catch(e => console.log("Music play blocked", e));
             uiLayer.classList.add('hidden');
             uiLayer.style.pointerEvents = 'none'; 
             currentState = STATE.IDLE;
@@ -434,7 +434,6 @@
             if (type === 'back') {
                 canvas.width = 256; canvas.height = 450; 
                 drawGreenBackground();
-                
                 drawBackImageContent(ctx);
 
             } else {
@@ -657,8 +656,9 @@
             if (currentState === STATE.IDLE) {
                 if (currentGesture === GESTURE.POINTING || currentGesture === GESTURE.PINCHING) {
                     raycaster.setFromCamera(new THREE.Vector2(smoothedCursorX, smoothedCursorY), camera);
-                    const visibleCards = cards.filter(c => !c.userData.isDissolved);
-                    const intersects = raycaster.intersectObjects(visibleCards);
+                    
+                    // 性能优化：直接检测 cards 数组，依赖 three.js 内部对 visible 的判断，避免 .filter 创建垃圾数组
+                    const intersects = raycaster.intersectObjects(cards);
 
                     if (intersects.length > 0) {
                         const target = intersects[0].object;
@@ -850,13 +850,41 @@
         function dissolveCard(card) {
             card.visible = false;
             card.userData.isDissolved = true;
-            if(activeAura) { scene.remove(activeAura); activeAura = null; }
+            
+            // 关键优化：销毁 Aura 几何体和材质，防止显存泄漏
+            if(activeAura) { 
+                scene.remove(activeAura); 
+                if (activeAura.geometry) activeAura.geometry.dispose();
+                if (activeAura.material) activeAura.material.dispose();
+                activeAura = null; 
+            }
+
             createCardExplosion(card);
             
             rearrangeCards();
 
             setTimeout(() => {
                 scene.remove(card); 
+                
+                // 关键优化：销毁卡牌上的纹理
+                const frontMaterial = card.material[5];
+                if (frontMaterial.map) {
+                    frontMaterial.map.dispose();
+                    frontMaterial.map = null;
+                }
+                
+                // 销毁几何体和所有材质（如果确实不复用）
+                if (card.geometry) card.geometry.dispose();
+                if (Array.isArray(card.material)) {
+                    card.material.forEach(m => m.dispose());
+                } else {
+                    card.material.dispose();
+                }
+
+                // 从数组中移除引用，辅助 GC
+                const idx = cards.indexOf(card);
+                if (idx > -1) cards.splice(idx, 1);
+
                 activeCard = null;
                 currentState = STATE.IDLE;
                 isPinching = false; 
@@ -929,8 +957,8 @@
                 if (life <= 0) { 
                     cancelAnimationFrame(animationId);
                     scene.remove(particles); 
-                    geometry.dispose(); 
-                    material.dispose(); 
+                    geometry.dispose(); // 确保释放粒子几何体
+                    material.dispose(); // 确保释放粒子材质
                     return; 
                 }
                 const pos = particles.geometry.attributes.position;
