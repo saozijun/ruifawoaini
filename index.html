@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>瑞法与羌青瓷 - 情感占卜 (性能优化版)</title>
+    <title>瑞法与羌青瓷 - 情感占卜 (自动平铺版)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous" defer></script>
@@ -147,6 +147,7 @@
         let activeAura = null; 
         let isZoomLocked = false; 
         let particleTexture = null; 
+        let isGridMode = false; // 新增：是否处于网格平铺模式
         
         const GESTURE = { NONE: 0, OPEN_HAND: 1, POINTING: 2, PINCHING: 3 };
         let currentGesture = GESTURE.NONE;
@@ -176,7 +177,7 @@
                     hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
                     hands.setOptions({
                         maxNumHands: 1,
-                        modelComplexity: 0, // 性能优化：降低模型复杂度
+                        modelComplexity: 0, 
                         minDetectionConfidence: 0.5,
                         minTrackingConfidence: 0.5
                     });
@@ -203,7 +204,7 @@
 
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // 性能优化：限制最大像素比
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
             document.getElementById('canvas-container').appendChild(renderer.domElement);
 
             particleTexture = createGlowTexture();
@@ -285,7 +286,7 @@
             geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
             const material = new THREE.PointsMaterial({
                 color: 0x88bbff, 
-                size: 0.5,       
+                size: 0.5,        
                 map: particleTexture,
                 transparent: true,
                 opacity: 0.8,
@@ -359,7 +360,8 @@
                     text: null,
                     isDissolved: false,
                     currentAngle: angle,
-                    targetAngle: angle
+                    targetAngle: angle,
+                    targetGridPos: null // 新增：网格模式的目标位置
                 };
                 cardGroup.add(card);
                 cards.push(card);
@@ -540,13 +542,19 @@
                 } else if (isOpenHand) {
                     isPinching = false; 
                     currentGesture = GESTURE.OPEN_HAND;
-                    gestureHint.innerText = "要看看聿想说的话吗";
-                    handCursor.visible = false; 
-                    if (lastHandX !== null) {
-                        const delta = ndcX - lastHandX;
-                        targetGroupRotationY -= delta * 2.2; 
+                    
+                    // 平铺模式下禁用旋转手势
+                    if (isGridMode) {
+                         gestureHint.innerText = "请选择卡片";
+                    } else {
+                         gestureHint.innerText = "旋转";
+                         if (lastHandX !== null) {
+                            const delta = ndcX - lastHandX;
+                            targetGroupRotationY -= delta * 2.2; 
+                        }
+                        lastHandX = ndcX;
                     }
-                    lastHandX = ndcX;
+                    handCursor.visible = false; 
 
                 } else {
                     isPinching = false; 
@@ -583,12 +591,19 @@
             const ndcY = - (event.clientY / window.innerHeight) * 2 + 1;
             if (isMouseDrag) {
                 currentGesture = GESTURE.OPEN_HAND;
-                gestureHint.innerText = "旋转模式";
-                if (lastHandX !== null) {
-                    const delta = ndcX - lastHandX;
-                    targetGroupRotationY -= delta * 2.0;
+                
+                // 平铺模式下禁用旋转
+                if (isGridMode) {
+                    gestureHint.innerText = "当前模式不可旋转";
+                } else {
+                    gestureHint.innerText = "旋转模式";
+                    if (lastHandX !== null) {
+                        const delta = ndcX - lastHandX;
+                        targetGroupRotationY -= delta * 2.0;
+                    }
+                    lastHandX = ndcX;
                 }
-                lastHandX = ndcX;
+                
                 handCursor.visible = false;
                 isPinching = false;
             } else {
@@ -622,25 +637,51 @@
 
             smoothedCursorX += (targetCursorX - smoothedCursorX) * 0.15; 
             smoothedCursorY += (targetCursorY - smoothedCursorY) * 0.15;
-            cardGroup.rotation.y += (targetGroupRotationY - cardGroup.rotation.y) * 0.05;
+            
+            // 模式分支逻辑
+            if (isGridMode) {
+                // 网格模式：强制将旋转归零
+                cardGroup.rotation.y += (0 - cardGroup.rotation.y) * 0.08;
+                targetGroupRotationY = 0; // 重置目标，防止切换回去时跳变
+
+                // 卡牌位置插值到网格点
+                cards.forEach(c => {
+                    if (!c.userData.isDissolved && c !== activeCard && c.userData.targetGridPos) {
+                        c.position.lerp(c.userData.targetGridPos, 0.1);
+                        
+                        // 计算朝向：在网格模式下，卡牌应该面朝摄像机（平铺）
+                        // 使用一个临时对象来计算 Quaternion
+                        const dummy = new THREE.Object3D();
+                        dummy.position.copy(c.position);
+                        dummy.lookAt(0, 0, 100); // 简单地让它朝向正前方(Z轴正向)，因为摄像机在(0,0,0.1)看向负Z，这样卡牌就正对着摄像机
+                        
+                        c.quaternion.slerp(dummy.quaternion, 0.1);
+                        c.userData.originPos.copy(c.position);
+                    }
+                });
+
+            } else {
+                // 环形模式：正常的旋转逻辑
+                cardGroup.rotation.y += (targetGroupRotationY - cardGroup.rotation.y) * 0.05;
+
+                cards.forEach(c => {
+                    if (!c.userData.isDissolved && c !== activeCard && c.userData.targetAngle !== undefined) {
+                        const diff = c.userData.targetAngle - c.userData.currentAngle;
+                        if (Math.abs(diff) > 0.0001) {
+                            c.userData.currentAngle += diff * 0.05;
+                            const r = 11;
+                            c.position.x = Math.cos(c.userData.currentAngle) * r;
+                            c.position.z = Math.sin(c.userData.currentAngle) * r;
+                            c.lookAt(0, 0, 0);
+                            c.userData.originPos.copy(c.position); 
+                        }
+                    }
+                });
+            }
 
             updateHandCursor3D(smoothedCursorX, smoothedCursorY);
 
             if(starField) starField.rotation.y = time * 0.02; 
-
-            cards.forEach(c => {
-                if (!c.userData.isDissolved && c !== activeCard && c.userData.targetAngle !== undefined) {
-                    const diff = c.userData.targetAngle - c.userData.currentAngle;
-                    if (Math.abs(diff) > 0.0001) {
-                        c.userData.currentAngle += diff * 0.05;
-                        const r = 11;
-                        c.position.x = Math.cos(c.userData.currentAngle) * r;
-                        c.position.z = Math.sin(c.userData.currentAngle) * r;
-                        c.lookAt(0, 0, 0);
-                        c.userData.originPos.copy(c.position); 
-                    }
-                }
-            }); 
 
             if (currentState === STATE.VIEWING && activeAura) {
                 updateAura(activeAura);
@@ -657,7 +698,6 @@
                 if (currentGesture === GESTURE.POINTING || currentGesture === GESTURE.PINCHING) {
                     raycaster.setFromCamera(new THREE.Vector2(smoothedCursorX, smoothedCursorY), camera);
                     
-                    // 性能优化：直接检测 cards 数组，依赖 three.js 内部对 visible 的判断，避免 .filter 创建垃圾数组
                     const intersects = raycaster.intersectObjects(cards);
 
                     if (intersects.length > 0) {
@@ -687,10 +727,18 @@
         }
 
         function highlightCard(card) {
-            const dir = card.userData.originPos.clone().normalize();
-            const targetPos = dir.multiplyScalar(9.5); 
-            targetPos.y = 0;
-            card.position.lerp(targetPos, 0.1);
+            // 在 Grid 模式下，不需要向外移动那么多，或者改变高亮逻辑
+            if (isGridMode) {
+                 const targetPos = card.userData.originPos.clone();
+                 targetPos.z += 1.5; // 稍微向前浮动
+                 card.position.lerp(targetPos, 0.1);
+            } else {
+                const dir = card.userData.originPos.clone().normalize();
+                const targetPos = dir.multiplyScalar(9.5); 
+                targetPos.y = 0;
+                card.position.lerp(targetPos, 0.1);
+            }
+            
             card.scale.lerp(new THREE.Vector3(1.15, 1.15, 1.15), 0.1);
             const materials = card.material;
             if(materials[4].emissive) materials[4].emissive.setHex(0x2e5844); 
@@ -700,7 +748,12 @@
             if (card.parent === scene) cardGroup.attach(card);
             const origin = card.userData.originPos;
             card.position.lerp(origin, 0.1);
-            card.lookAt(0,0,0);
+            
+            // Grid 模式下朝向已经在 animate 中处理，这里只需处理环形模式的lookAt
+            if (!isGridMode) {
+                card.lookAt(0,0,0);
+            }
+            
             card.scale.set(1, 1, 1);
             const materials = card.material;
             if(materials[4].emissive) materials[4].emissive.setHex(0x000000);
@@ -733,7 +786,7 @@
             const frontMaterial = card.material[5];
             frontMaterial.map = frontTexture;
             frontMaterial.transparent = false; 
-            frontMaterial.opacity = 1;         
+            frontMaterial.opacity = 1;          
             frontMaterial.emissive = new THREE.Color(0xffffff);
             frontMaterial.emissiveMap = frontTexture;
             frontMaterial.emissiveIntensity = 0.3; 
@@ -851,7 +904,6 @@
             card.visible = false;
             card.userData.isDissolved = true;
             
-            // 关键优化：销毁 Aura 几何体和材质，防止显存泄漏
             if(activeAura) { 
                 scene.remove(activeAura); 
                 if (activeAura.geometry) activeAura.geometry.dispose();
@@ -866,14 +918,12 @@
             setTimeout(() => {
                 scene.remove(card); 
                 
-                // 关键优化：销毁卡牌上的纹理
                 const frontMaterial = card.material[5];
                 if (frontMaterial.map) {
                     frontMaterial.map.dispose();
                     frontMaterial.map = null;
                 }
                 
-                // 销毁几何体和所有材质（如果确实不复用）
                 if (card.geometry) card.geometry.dispose();
                 if (Array.isArray(card.material)) {
                     card.material.forEach(m => m.dispose());
@@ -881,7 +931,6 @@
                     card.material.dispose();
                 }
 
-                // 从数组中移除引用，辅助 GC
                 const idx = cards.indexOf(card);
                 if (idx > -1) cards.splice(idx, 1);
 
@@ -896,17 +945,52 @@
             const count = validCards.length;
             if (count === 0) return;
             
-            validCards.forEach((c, i) => {
-                const target = (i / count) * Math.PI * 2;
-                let current = c.userData.currentAngle;
+            // 如果少于10张卡片，进入平铺模式
+            if (count < 10) {
+                isGridMode = true;
                 
-                const PI2 = Math.PI * 2;
-                while (target - current > Math.PI) current += PI2;
-                while (target - current < -Math.PI) current -= PI2;
+                // 计算网格布局
+                // 动态列数：少的时候紧凑一点
+                let cols = 5; 
+                if (count <= 3) cols = count;
+                else if (count <= 8) cols = 4;
                 
-                c.userData.currentAngle = current;
-                c.userData.targetAngle = target;
-            });
+                const rows = Math.ceil(count / cols);
+                const spacingX = 2.4; // 卡片宽1.8 + 间隙
+                const spacingY = 3.6; // 卡片高3.2 + 间隙
+                
+                const gridWidth = (cols - 1) * spacingX;
+                const gridHeight = (rows - 1) * spacingY;
+                
+                const startX = -gridWidth / 2;
+                const startY = gridHeight / 2;
+                
+                validCards.forEach((c, i) => {
+                    const col = i % cols;
+                    const row = Math.floor(i / cols);
+                    
+                    const x = startX + col * spacingX;
+                    const y = startY - row * spacingY;
+                    const z = -12; // 放置在摄像机前方远处 (半径是11，所以-12差不多是在圆环对面平铺)
+                    
+                    c.userData.targetGridPos = new THREE.Vector3(x, y, z);
+                });
+                
+            } else {
+                isGridMode = false;
+                // 原有的圆环布局
+                validCards.forEach((c, i) => {
+                    const target = (i / count) * Math.PI * 2;
+                    let current = c.userData.currentAngle;
+                    
+                    const PI2 = Math.PI * 2;
+                    while (target - current > Math.PI) current += PI2;
+                    while (target - current < -Math.PI) current -= PI2;
+                    
+                    c.userData.currentAngle = current;
+                    c.userData.targetAngle = target;
+                });
+            }
         }
 
         function createCardExplosion(card) {
@@ -957,8 +1041,8 @@
                 if (life <= 0) { 
                     cancelAnimationFrame(animationId);
                     scene.remove(particles); 
-                    geometry.dispose(); // 确保释放粒子几何体
-                    material.dispose(); // 确保释放粒子材质
+                    geometry.dispose(); 
+                    material.dispose(); 
                     return; 
                 }
                 const pos = particles.geometry.attributes.position;
