@@ -545,7 +545,7 @@
                     handCursor.visible = false; 
                     if (lastHandX !== null) {
                         const delta = ndcX - lastHandX;
-                        targetGroupRotationY -= delta * 0.8; 
+                        targetGroupRotationY -= delta * 2.2; 
                     }
                     lastHandX = ndcX;
 
@@ -712,9 +712,9 @@
             
             isZoomLocked = true;
             
-            const remainingCards = cards.filter(c => !c.userData.isDissolved && c !== card).length;
+            const remainingCards = cards.filter(c => !c.userData.isDissolved).length;
             let cardText;
-            if (remainingCards === 0) {
+            if (remainingCards === 1) {
                 cardText = FINAL_TEXT;
             } else {
                 if (availableTexts.length === 0) {
