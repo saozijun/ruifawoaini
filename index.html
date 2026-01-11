@@ -712,9 +712,9 @@
             
             isZoomLocked = true;
             
-            const remainingCards = cards.filter(c => !c.userData.isDissolved).length;
+            const remainingCards = cards.filter(c => !c.userData.isDissolved && c !== card).length;
             let cardText;
-            if (remainingCards === 1) {
+            if (remainingCards === 0) {
                 cardText = FINAL_TEXT;
             } else {
                 if (availableTexts.length === 0) {
@@ -923,9 +923,16 @@
             scene.add(particles);
 
             let life = 1.0;
+            let animationId;
             function animateP() {
                 life -= 0.02; 
-                if (life <= 0) { scene.remove(particles); geometry.dispose(); material.dispose(); return; }
+                if (life <= 0) { 
+                    cancelAnimationFrame(animationId);
+                    scene.remove(particles); 
+                    geometry.dispose(); 
+                    material.dispose(); 
+                    return; 
+                }
                 const pos = particles.geometry.attributes.position;
                 for (let i = 0; i < particleCount; i++) {
                     pos.array[i*3] += velocities[i*3];
@@ -938,7 +945,7 @@
                 }
                 pos.needsUpdate = true;
                 material.opacity = life;
-                requestAnimationFrame(animateP);
+                animationId = requestAnimationFrame(animateP);
             }
             animateP();
         }
