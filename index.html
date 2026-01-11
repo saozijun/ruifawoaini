@@ -520,7 +520,7 @@
 
                 if (isPinchingNow) {
                     currentGesture = GESTURE.PINCHING;
-                    gestureHint.innerText = "🔹 捏合 · 启示"; 
+                    gestureHint.innerText = "想要"; 
                     handCursor.children[0].material.color.setHex(0xffaa00); 
                     
                     if (!isPinching) {
@@ -531,7 +531,7 @@
                 } else if (isPointing) {
                     isPinching = false; 
                     currentGesture = GESTURE.POINTING;
-                    gestureHint.innerText = "☝️ 选中卡片";
+                    gestureHint.innerText = "要看看聿想说的话吗";
                     handCursor.children[0].material.color.setHex(0xffffff); 
                     targetCursorX = ndcX;
                     targetCursorY = ndcY;
@@ -541,7 +541,7 @@
                 } else if (isOpenHand) {
                     isPinching = false; 
                     currentGesture = GESTURE.OPEN_HAND;
-                    gestureHint.innerText = "🖐️ 滑动 · 命运之轮";
+                    gestureHint.innerText = "滑动";
                     handCursor.visible = false; 
                     if (lastHandX !== null) {
                         const delta = ndcX - lastHandX;
@@ -584,7 +584,7 @@
             const ndcY = - (event.clientY / window.innerHeight) * 2 + 1;
             if (isMouseDrag) {
                 currentGesture = GESTURE.OPEN_HAND;
-                gestureHint.innerText = "🖱️ 旋转模式";
+                gestureHint.innerText = "旋转模式";
                 if (lastHandX !== null) {
                     const delta = ndcX - lastHandX;
                     targetGroupRotationY -= delta * 2.0;
@@ -594,7 +594,7 @@
                 isPinching = false;
             } else {
                 currentGesture = GESTURE.POINTING;
-                gestureHint.innerText = "🖱️ 选择模式 (点击=捏合)";
+                gestureHint.innerText = "选择模式";
                 targetCursorX = ndcX;
                 targetCursorY = ndcY;
                 lastHandX = null;
